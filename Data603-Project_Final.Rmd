@@ -1,0 +1,364 @@
+---
+title: "Price Prediction of Used Cars"
+author: "Bilal Naseem, Franco Doi, Gautham Chandra Shekariah, Joao Bertti Targino, Romith Bondada"
+date: "2025-03-28"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+**1.Reading the data**
+```{r}
+used_car_data = read.csv('https://raw.githubusercontent.com/Gautham-Nagaraj/Data603-Project/refs/heads/main/final_used_car_dataset.csv')
+head(used_car_data)
+```
+Remove 'na' values as they cause issues while plotting residuals
+
+```{r}
+used_car_data = na.omit(used_car_data)
+```
+
+```{r}
+colnames(used_car_data)
+```
+**2.Building the full additive model**
+
+```{r}
+fullAddModel = lm(price ~ fuel_type + accidents + luxury_brand + engine_size + automatic_transmission+
+                  car_age + mileage_status + external_color + internal_color + metallic_color,
+                  data = used_car_data)
+summary(fullAddModel)
+```
+We get a horrible $adjusted R^2$ value for the full model, let us try the best_subset function to choose the best predictors from the full model.
+
+**3.Selecting the best additive model using subsets and step_wise procedures, based on all possible selection criterion**
+
+Import the olsrr library and use the ols_step_best_subset function to get the best subset of predictors.
+
+```{r}
+library(olsrr)
+used_car_Subsets = ols_step_best_subset(fullAddModel, details=FALSE)
+```
+
+```{r}
+used_car_Subsets$metrics
+```
+We are only interested in $adjusted R^2$, AIC(Akaike Information Criterion) and Mallow's cp criterion for this model. We do not choose to use R2 as it does not punish the model for adding more predictors/overfitting.
+
+```{r}
+AdjustedR2=c((used_car_Subsets$metrics)$adjr)
+cp=c((used_car_Subsets$metrics)$cp)
+AIC=c((used_car_Subsets$metrics)$aic)
+cbind(AdjustedR2,cp,AIC)
+```
+
+From the best subsets model, we get the best model to be based on the highest $adjusted R^2$, cp_mallows should be closer to (the number of predictors) k +1 and the sample size n must be larger than the number of predictors k.The AIC should be as low as possible, as it represents the information loss
+
+Based on the information, the model with 7 predictors, seems to have the highest $adjusted R^2$, a cp value approximately close to the predictors, indicating a small bias.It also has the lowest AIC compared to the other models.
+```{r}
+cat("The model with the following (7)predictors: ",used_car_Subsets$metrics$predictors[7], "\nhas the following criterion: \nadjusted R2:",used_car_Subsets$metrics$adjr[7], "\nMallow's cp:",used_car_Subsets$metrics$cp[7],"\nAIC:", used_car_Subsets$metrics$aic[7])
+```
+
+```{r}
+par(mfrow=c(2,2)) # split the plotting panel into a 2 x 2 grid
+plot(cp,type = "o",pch=10, xlab="Number of Variables",ylab= "Cp")
+plot(AIC,type = "o",pch=10, xlab="Number of Variables",ylab= "AIC")
+plot(AdjustedR2,type = "o",pch=10, xlab="Number of Variables",ylab= "Adjusted R^2")
+```
+Let us verify the results of the model obtained through the ols_step_best_subset() with the regsubsets() from the leaps package.
+
+```{r}
+library(leaps)
+alternate_car_Subsets = regsubsets(price ~ fuel_type + accidents + luxury_brand + engine_size +        automatic_transmission+ car_age + mileage_status + external_color + internal_color + metallic_color,
+                  data = used_car_data, nv = 10)
+summary(alternate_car_Subsets)
+```
+```{r}
+reg.summary=summary(alternate_car_Subsets)
+cp=c(reg.summary$cp)
+AdjustedR2=c(reg.summary$adjr2)
+BIC=c(reg.summary$bic)
+cbind(cp,AdjustedR2,BIC)
+```
+
+Although we get a slightly lower $adjusted R^2$, compared to the other subsets, the Mallow's cp criterion falls closer to the k+2 and the model with 7 predictors also has a lower BIC, which is closely related to AIC.
+
+
+Based on the subsets, this seems to be the best fit additive model, so far. 
+
+We can try to compare the results obtained from the best_subsets method with the ols_step wise procedures, although the results may not be the best as this method performs continuous t-tests which will eventually make a type-1 error (at an alpha of 5%). 
+
+We will be trying out all the stepwise procedures and comparing the results.
+
+
+```{r}
+UsedCarFor=ols_step_forward_p(fullAddModel,p_val = 0.05, details=FALSE)
+summary(UsedCarFor$model)
+```
+
+```{r}
+UsedCarBack=ols_step_backward_p(fullAddModel,p_val = 0.05, details=FALSE)
+summary(UsedCarFor$model)
+```
+
+```{r}
+UsedCarBoth = ols_step_both_p(fullAddModel,p_enter = 0.08, p_remove = 0.2, details=FALSE)
+summary(UsedCarBoth$model)
+```
+
+All the 3 models provide us with the same $adjusted R^2$, we can conclude that using 7 predictors is the best option(obtained from the subsets).
+
+**3.Testing the assumptions for the model obtained in part 2**
+luxury_brand engine_size automatic_transmission car_age mileage_status external_color internal_color
+
+```{r}
+usedCarsBestAdd = lm(price ~ luxury_brand + engine_size + automatic_transmission + car_age + mileage_status + external_color  + internal_color, data = used_car_data)
+summary(usedCarsBestAdd)
+```
+**a.MultiColinearity** Since there are only 2 continuous variables in the model, we can plot them to see if there are any patterns.
+
+```{r}
+pairs(~engine_size+car_age, data = used_car_data)
+```
+Appears to be random, we can confirm this using the VIF test.
+
+```{r}
+library(mctest) 
+smaller_model = lm(price ~ engine_size + car_age, data = used_car_data)
+imcdiag(smaller_model, method = "VIF")
+```
+From the results of the VIF test, we can confirm that there is no multi-colinearity between car_age and engine_size.
+
+**b.Linearity** 
+
+```{r}
+library(ggplot2)
+ggplot(usedCarsBestAdd, aes(x=.fitted, y=.resid)) +
+geom_point() +geom_smooth()+
+geom_hline(yintercept = 0)
+```
+
+It appears that there is no observable pattern between the residuals and fitted values. However there are few outliers which will be dealt with later.
+
+**c.Independence Assumption**
+A common way to check for independence is to plot a graph of residuals vs time, if there are patterns in the plot, it is most likely that the independence is violated. Since we are not dealing with time data, we can assume that there is independence between the residuals. We cannot plot residuals vs time as there is no time data/variable.
+
+
+**d.Equal Variance Assumption**
+
+We plot the same plot as before, this time using a different function.
+```{r}
+plot(usedCarsBestAdd, which=1)
+```
+
+It appears that there is some sort funneling towards the right end of the graph. We can test this assumption using the Breusch-Pagan test. The null hypothesis states there is no heteroscedasticity and the alternate hypothesis states there is  heteroscedasticity.
+
+```{r}
+library(lmtest)
+bptest(usedCarsBestAdd)
+```
+We conclude that there is heteroscedasticity by rejecting the p-value at a significance level of 5%.
+There are a few ways to deal with heteroscedasticity, either log transforms, box-cox transformation or using a weighted least square regression model.
+
+We can decide to use the box-cox transformation as it deals with normality as well. The next step will let us know if the data is normal or not.
+
+**e.Normality**
+
+
+```{r}
+par(mfrow=c(1,2))
+hist(residuals(usedCarsBestAdd))
+plot(usedCarsBestAdd, which=2)
+```
+It appears that the residuals do not follow a normal distribution. We can verify the normality using the shapiro-wilk test and Kolmogorov-Smirnov
+
+```{r}
+shapiro.test(residuals(usedCarsBestAdd))
+```
+
+
+```{r}
+ks.test(residuals(usedCarsBestAdd), "pnorm")
+```
+The p-value is rejected in both cases indicating that there is no normality for the residuals. We can start by adding higher order terms and simultaneously check if the heteroscedasticity and normality issues are fixed, else we move on to box-cox transformations.
+
+```{r}
+library(GGally)
+ggpairs(used_car_data[, c('engine_size', 'car_age', 'price')], 
+        lower = list(continuous = "smooth_loess", combo = "facetdist", discrete = "facetbar", na = "na"))
+```
+
+
+As there are only 2 continuous variables, we can add higher order terms easily.
+
+```{r}
+usedCarsBestAddHigher = lm(price ~ luxury_brand + engine_size + I(engine_size^2) + automatic_transmission + car_age + mileage_status + external_color  + internal_color, data = used_car_data)
+summary(usedCarsBestAddHigher)
+```
+We can try a cubic model with engine size:
+
+```{r}
+usedCarsBestAddCubic = lm(price ~ luxury_brand + engine_size + I(engine_size^2)+ I(engine_size^3) + automatic_transmission + car_age + mileage_status + external_color  + internal_color, data = used_car_data)
+summary(usedCarsBestAddCubic)
+```
+We can keep going,looks like the adjusted R2 has slightly improved as well.
+
+```{r}
+usedCarsBestAddFour = lm(price ~ luxury_brand + engine_size + I(engine_size^2)+ I(engine_size^3) + I(engine_size^4)+ automatic_transmission + car_age + mileage_status + external_color  + internal_color, data = used_car_data)
+summary(usedCarsBestAddFour)
+```
+keep going!
+
+```{r}
+usedCarsBestAddFive = lm(price ~ luxury_brand + engine_size + I(engine_size^2)+ I(engine_size^3) + I(engine_size^4)+I(engine_size^5) + automatic_transmission + car_age + mileage_status + external_color  + internal_color, data = used_car_data)
+summary(usedCarsBestAddFive)
+```
+Time to go back, and try higher order terms for car_age.
+
+```{r}
+usedCarsBestAddFourTwo = lm(price ~ luxury_brand + engine_size + I(engine_size^2)+ I(engine_size^3) + I(engine_size^4)+ automatic_transmission + car_age + I(car_age^2)+ mileage_status + external_color  + internal_color, data = used_car_data)
+summary(usedCarsBestAddFourTwo)
+```
+Go higher!
+```{r}
+usedCarsBestAddFourThree = lm(price ~ luxury_brand + engine_size + I(engine_size^2)+ I(engine_size^3) + I(engine_size^4)+ automatic_transmission + car_age + I(car_age^2)+ I(car_age^3)+ mileage_status + external_color  + internal_color, data = used_car_data)
+summary(usedCarsBestAddFourThree)
+```
+
+Looks like we need to go back now. The higher order terms up-to 4 for engine_size and 2 for car_age are significant and we can proceed with this model.
+
+Test homoscedasticity again:
+```{r}
+bptest(usedCarsBestAddFourTwo)
+```
+Test for Normality:
+```{r}
+ks.test(residuals(usedCarsBestAddFourTwo), "pnorm")
+```
+
+```{r}
+shapiro.test(residuals(usedCarsBestAddFourTwo))
+```
+Both Normality and homoscedasticity tests for the residuals have failed again, we can now try box-cox transformations.
+(The tests were conducted for each higher model, they all failed. I have not shown these steps.)
+
+
+Box-Cox Transformations:
+
+```{r}
+library(MASS)
+box_cox = boxcox(usedCarsBestAddFour,lambda=seq(-1,1))
+```
+Looks like there are 3 lambda values which have the same highest value. Let R choose the best one
+
+```{r}
+lambda=box_cox$x[which(box_cox$y==max(box_cox$y))]
+lambda
+```
+```{r}
+transformed_model = lm((price^-01919192)-1/-01919192 ~ luxury_brand + engine_size + I(engine_size^2)+ I(engine_size^3) + I(engine_size^4)+ automatic_transmission + car_age + I(car_age^2)+ mileage_status + external_color  + internal_color, data = used_car_data)
+summary(transformed_model)
+```
+
+Using the box-cox transformation we lose the significance of all the predictors.
+
+
+```{r}
+log_transformed_model = lm(log(price) ~ luxury_brand + engine_size + I(engine_size^2)+ I(engine_size^3) + I(engine_size^4)+ automatic_transmission + car_age + I(car_age^2)+ mileage_status + external_color  + internal_color, data = used_car_data)
+summary(log_transformed_model)
+```
+However the log transform kept all the predictors as significant and increased the adjusted R2 to 74.26%
+
+we can test for normality and homoscedascticity again:
+
+```{r}
+shapiro.test(residuals(log_transformed_model))
+ks.test(residuals(log_transformed_model), "pnorm")
+bptest(log_transformed_model)
+```
+However we have failed to obtain normality and homoscedascticity once again.
+We can remove outliers and try these tests again-
+
+**f.Outliers**
+
+```{r}
+plot(log_transformed_model,which=5)
+```
+
+```{r}
+used_car_data[cooks.distance(log_transformed_model)>0.1,]
+```
+It looks like the log transformation has taken care of all the outliers and there is only 1 outlier with a cook's distance of more than 0.1. Making it non-influential.
+
+```{r}
+plot(log_transformed_model,pch=18,col="red",which=c(4))
+```
+As the value does not lie between 0.5 and 1, we can say confirm that it is non-influential
+
+Compute Leverage points:
+```{r}
+lev=hatvalues(log_transformed_model)
+p = length(coef(log_transformed_model))
+n = nrow(used_car_data)
+outlier2p = lev[lev>(2*p/n)]
+outlier3p = lev[lev>(3*p/n)]
+```
+
+```{r}
+plot(rownames(used_car_data),lev, main = "Leverage in Advertising Dataset", xlab="observation",
+ylab = "Leverage Value")
+abline(h = 2 *p/n, lty = 1)
+abline(h = 3 *p/n, lty = 1)
+```
+
+```{r}
+threshold = 3 * p / n
+
+outliers = used_car_data$leverage > threshold
+
+used_car_data_no_outliers = used_car_data[!outliers, ]
+
+head(used_car_data_no_outliers)
+```
+
+Turns out removing the outliers causes the dataset to be empty.We can ignore these outliers as there are not influential.
+
+As we have tried every transformation possible and ended up with the best model being the log transformation, we can try a weighted least square method regression as it does not depend on homoscedascticity.
+
+```{r}
+model.weights <- 1 / lm(abs(log_transformed_model$residuals) ~ log_transformed_model$fitted.values)$fitted.values^2
+
+cars.lmw <- lm((log(price) ~ luxury_brand + engine_size + I(engine_size^2)+ I(engine_size^3) + I(engine_size^4)+ automatic_transmission + car_age + I(car_age^2)+ mileage_status + external_color  + internal_color), data = used_car_data, 
+              weights = model.weights)
+summary.lm(cars.lmw)
+```
+```{r}
+model.weights <- 1 / lm(abs(usedCarsBestAddFourTwo$residuals) ~ usedCarsBestAddFourTwo$fitted.values)$fitted.values^2
+
+cars.lmw <- lm((price) ~ luxury_brand + engine_size + I(engine_size^2)+ I(engine_size^3) + I(engine_size^4)+ automatic_transmission + car_age + I(car_age^2)+ mileage_status + external_color  + internal_color, data = used_car_data, 
+              weights = model.weights)
+summary.lm(cars.lmw)
+```
+
+```{r}
+shapiro.test(residuals(cars.lmw))
+ks.test(residuals(cars.lmw), "pnorm")
+bptest(cars.lmw)
+```
+Normality still fails but homoscedascticity is taken care of, and the model has an adjusted R2 of 96.15% !
+
+Now we can add our interaction terms to see if we can further improve the model:
+
+```{r}
+used_cars_interac = lm((price) ~ (luxury_brand + engine_size +  automatic_transmission + car_age + mileage_status + external_color  + internal_color)^2 + I(engine_size^2)+ I(engine_size^3) + I(engine_size^4)+I(car_age^2), data = used_car_data, weights = model.weights)
+summary(used_cars_interac)
+```
+It looks like all the main predictors are still significant. We can further improve this model but removing interaction terms that are not significant, but due to variables with different levels we can choose to keep them. The higher adjusted R2 could also be due to overfitting of the model, an important point to consider. However this model is still not fit for predictions as we could not obtain normality of residuals.
+
+```{r}
+par(mfrow=c(1,2))
+hist(residuals(used_cars_interac))
+plot(used_cars_interac, which=2)
+```
+
+
