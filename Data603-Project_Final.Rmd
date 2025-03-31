@@ -29,6 +29,23 @@ fullAddModel = lm(price ~ fuel_type + accidents + luxury_brand + engine_size + a
                   data = used_car_data)
 summary(fullAddModel)
 ```
+**a.MultiColinearity** Since there are only 2 continuous variables in the model, we can plot them to see if there are any patterns.
+
+```{r}
+pairs(~engine_size+car_age, data = used_car_data)
+```
+
+Appears to be random, we can confirm this using the VIF test on all the variables rather than the two columns.
+
+```{r}
+library(mctest) 
+smaller_model = lm(price ~ fuel_type + accidents + luxury_brand + engine_size + automatic_transmission+
+                  car_age + mileage_status + external_color + internal_color + metallic_color,
+                  data = used_car_data)
+imcdiag(smaller_model, method = "VIF")
+```
+
+From the results of the VIF test, we can confirm that there is no multi-colinearity between the variables.
 We get a horrible $adjusted R^2$ value for the full model, let us try the best_subset function to choose the best predictors from the full model.
 
 **3.Selecting the best additive model using subsets and step_wise procedures, based on all possible selection criterion**
@@ -109,7 +126,6 @@ summary(UsedCarBoth$model)
 All the 3 models provide us with the same $adjusted R^2$, we can conclude that using 7 predictors is the best option(obtained from the subsets).
 
 **3.Testing the assumptions for the model obtained in part 2**
-luxury_brand engine_size automatic_transmission car_age mileage_status external_color internal_color
 
 ```{r}
 usedCarsBestAdd = lm(price ~ luxury_brand + engine_size + automatic_transmission + car_age + mileage_status + external_color  + internal_color, data = used_car_data)
@@ -324,6 +340,18 @@ head(used_car_data_no_outliers)
 Turns out removing the outliers causes the dataset to be empty.We can ignore these outliers as there are not influential.
 
 As we have tried every transformation possible and ended up with the best model being the log transformation, we can try a weighted least square method regression as it does not depend on homoscedascticity.
+We modify the ordinary least square regression to include a diagonal matrix of weights W, where the weights are the $w_{ii}$ reciprocal of the $i^{th}$ observation.
+
+Weighted Least Square Regression:
+
+$\widehat{\beta} = (X'WX)^{-1}X'WY$
+
+The weighted least squares equation collapses to the ordinary least squares equation if the weights are constant. The trick with weighted least squares is the estimation of W
+. If the variances of the observations or their functional form are somehow known, you can use that. More likely, you need to estimate W
+ from residual plots.
+
+If the residuals vs fitted values plot has a megaphone shape, regress $|ϵ|∼y$ <- which is true in our case
+->The inverse of the fitted values are the $w_{ii}'s$
 
 ```{r}
 model.weights <- 1 / lm(abs(log_transformed_model$residuals) ~ log_transformed_model$fitted.values)$fitted.values^2
@@ -332,6 +360,8 @@ cars.lmw <- lm((log(price) ~ luxury_brand + engine_size + I(engine_size^2)+ I(en
               weights = model.weights)
 summary.lm(cars.lmw)
 ```
+We can try the weighted least square regression model for the additive model with higher order terms:
+
 ```{r}
 model.weights <- 1 / lm(abs(usedCarsBestAddFourTwo$residuals) ~ usedCarsBestAddFourTwo$fitted.values)$fitted.values^2
 
@@ -339,7 +369,7 @@ cars.lmw <- lm((price) ~ luxury_brand + engine_size + I(engine_size^2)+ I(engine
               weights = model.weights)
 summary.lm(cars.lmw)
 ```
-
+We get a better result in terms of adj R2, compared to the log model.
 ```{r}
 shapiro.test(residuals(cars.lmw))
 ks.test(residuals(cars.lmw), "pnorm")
@@ -361,4 +391,63 @@ hist(residuals(used_cars_interac))
 plot(used_cars_interac, which=2)
 ```
 
+Removing the non-significant interaction terms:
+```{r}
+used_car_best_model = lm(price ~ luxury_brand + engine_size + automatic_transmission + car_age + mileage_status + 
+               external_color + internal_color + I(engine_size^2) + I(engine_size^3) + 
+               I(engine_size^4) + I(car_age^2) + 
+               luxury_brand:engine_size + luxury_brand:automatic_transmission + 
+               luxury_brand:car_age + luxury_brand:mileage_status + 
+               luxury_brand:external_color + luxury_brand:internal_color + 
+               engine_size:automatic_transmission + engine_size:car_age + 
+               engine_size:mileage_status + engine_size:external_color + 
+               engine_size:internal_color + automatic_transmission:car_age + 
+               automatic_transmission:mileage_status + 
+               automatic_transmission:external_color + 
+               automatic_transmission:internal_color + car_age:mileage_status + 
+               car_age:external_color + car_age:internal_color + 
+               mileage_status:external_color + mileage_status:internal_color + 
+               external_color:internal_color, data = used_car_data , weights = model.weights)
+summary(used_car_best_model)
+```
+Let us try to build the regression model using weighted least square methods for the additive model only. It will help us get some insights on the sub-models(Although we could not obtain normality).
 
+```{r}
+model_add_weights <- 1 / lm(abs(usedCarsBestAdd$residuals) ~ usedCarsBestAdd$fitted.values)$fitted.values^2
+
+cars_add_lmw <- lm((price) ~ luxury_brand + engine_size + automatic_transmission + car_age + mileage_status + external_color  + internal_color, data = used_car_data, 
+              weights = model.weights)
+summary.lm(cars_add_lmw)
+```
+Interpretation of the Coefficients:
+
+(Intercept): 32413.18: This is the estimated price of a car when all predictor variables are zero (which may not be practically meaningful).
+
+luxury_brandYes: 6639.19: Luxury brand cars are estimated to have prices $6,639.19 higher than non-luxury brands, holding other factors constant.
+
+engine_size: 4655.87: For each one-unit increase in engine size, the price is estimated to increase by $4,655.87, holding other factors constant.
+
+automatic_transmissionYes: -6977.36: Cars with automatic transmissions are estimated to have prices $6,977.36 lower than cars with manual transmissions, holding other factors constant.
+
+car_age: -1955.36: For each additional year of car age, the price is estimated to decrease by $1,955.36, holding other factors constant.
+
+mileage_status-
+mileage_statusavg: 2659.14: Cars with "avg" mileage have prices $2,659.14 higher than the baseline mileage status.
+mileage_statushigh: 3403.13: Cars with "high" mileage have prices $3,403.13 higher than the baseline mileage status.
+mileage_statuslow: 13888.17: Cars with "low" mileage have prices $13,888.17 higher than the baseline mileage status.
+mileage_statusverylow: 41524.15: Cars with "verylow" mileage have prices $41,524.15 higher than the baseline mileage status.
+
+external_color-
+external_colorBlue: -6007.81: Blue cars are estimated to have prices $6,007.81 lower than the baseline external color.
+external_colorGray: -8137.76: Gray cars are estimated to have prices $8,137.76 lower than the baseline external color.
+external_colorOther: -17276.21: Cars with "other" external colors are estimated to have prices $17,276.21 lower than the baseline external color.
+external_colorRed: -5231.14: Red cars are estimated to have prices $5,231.14 lower than the baseline external color.
+external_colorSilver: -8238.57: Silver cars are estimated to have prices $8,238.57 lower than the baseline external color.
+external_colorWhite: -8126.42: White cars are estimated to have prices $8,126.42 lower than the baseline external color.
+
+internal_color:
+internal_colorBlack: -3190.62: Black interior cars are estimated to have prices $3,190.62 lower than the baseline interior color.
+internal_colorGray: -893.59: Gray interior cars are estimated to have prices $893.59 lower than the baseline interior color.
+internal_colorOther_Colored: 2145.23: Cars with "other colored" interiors are estimated to have prices $2,145.23 higher than the baseline interior color.
+
+------------------------------------------------------End of document--------------------------------------------------------
